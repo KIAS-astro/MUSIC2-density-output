@@ -715,6 +715,10 @@ public:
     // do not write out densities as we write out displacements
     if (doBaryons)
       massTable[GAS_PARTTYPE] = omega_b * rhoCrit * pow(boxSize * posFac, 3.0) / pow(2, 3 * levelmax_);
+    if (!doublePrec)
+      __write_gas_properties<float>(gh);
+    else
+      __write_gas_properties<double>(gh);
   }
 
   void write_gas_potential(const grid_hierarchy &gh) { /* skip */
