@@ -22,6 +22,7 @@
 #include "densities.hh"
 #include "random.hh"
 #include "convolution_kernel.hh"
+#include "output_debug_fields.hh"
 
 //TODO: this should be a larger number by default, just to maintain consistency with old default
 #define DEF_RAN_CUBE_SIZE 32
@@ -432,6 +433,42 @@ void GenerateDensityHierarchy(config_file &cf, const cosmology::calculator* cc, 
 		coarsen_density(refh,delta,false);
 	}
 	music::ulog.Print("Finished computing the density field in %fs", tend - tstart);
+	//═══════════════════════════════════════════════════════════════
+// DEBUG OUTPUT: Write density field to files
+//═══════════════════════════════════════════════════════════════
+{
+    music::ilog << "=== Writing debug density field output ===" << std::endl;
+    
+    // Get box size from config
+    real_t boxlength = cf.get_value<double>("setup", "boxlength");
+    
+    // Loop over all levels
+    for (unsigned ilevel = levelmin; ilevel <= levelmax; ++ilevel) {
+        auto* pgrid = delta.get_grid(ilevel);
+        
+        if (pgrid) {
+            music::ilog.Print("Writing density field for level %d", ilevel);
+            
+            // Print statistics
+            debug_output::print_field_statistics(*pgrid, 
+                "density field level " + std::to_string(ilevel));
+            
+            // Write real space
+            debug_output::write_density_real(*pgrid, ilevel, "delta");
+            
+            // Write Fourier space
+            debug_output::write_density_fourier(*pgrid, ilevel, "delta");
+            
+            // Write power spectrum
+            debug_output::write_power_spectrum(*pgrid, ilevel, boxlength, "delta");
+        }
+    }
+    
+    music::ilog << "=== Finished writing debug output ===" << std::endl;
+}
+//═══════════════════════════════════════════════════════════════
+	
+	
 }
 
 /*******************************************************************************************/
