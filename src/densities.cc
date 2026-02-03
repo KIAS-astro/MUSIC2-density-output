@@ -439,7 +439,7 @@ void GenerateDensityHierarchy(config_file &cf, const cosmology::calculator* cc, 
 {
     music::ilog << "=== Writing debug density field output ===" << std::endl;
     // Normalize density field before writing debug output
-    normalize_density(delta);
+   // normalize_density(delta);
     // Get box size from config
     real_t boxlength = cf.get_value<double>("setup", "boxlength");
     
