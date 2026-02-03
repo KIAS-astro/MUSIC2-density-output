@@ -5,32 +5,85 @@
 #include <complex>
 #include <cmath>
 #include <map>
+#include <algorithm>
 #include "general.hh"
 #include "mesh.hh"
+#include "config_file.hh"
 
 namespace debug_output {
+
+// Print expected refinement region from config file
+inline void print_expected_refinement_region(config_file& cf, int level) {
+    if (!cf.contains_key("setup", "ref_center") && !cf.contains_key("setup", "ref_offset")) {
+        music::ilog << "DEBUG: No zoom-in region specified (unigrid run)" << std::endl;
+        return;
+    }
+
+    double xcen[3], xext[3];
+    std::string temp;
+
+    // Read ref_center
+    if (cf.contains_key("setup", "ref_center")) {
+        temp = cf.get_value<std::string>("setup", "ref_center");
+        std::remove_if(temp.begin(), temp.end(), isspace);
+        sscanf(temp.c_str(), "%lf,%lf,%lf", &xcen[0], &xcen[1], &xcen[2]);
+    }
+
+    // Read ref_extent
+    if (cf.contains_key("setup", "ref_extent")) {
+        temp = cf.get_value<std::string>("setup", "ref_extent");
+        std::remove_if(temp.begin(), temp.end(), isspace);
+        sscanf(temp.c_str(), "%lf,%lf,%lf", &xext[0], &xext[1], &xext[2]);
+    }
+
+    // Compute expected region bounds
+    double x0[3], x1[3];
+    for (int i = 0; i < 3; ++i) {
+        x0[i] = xcen[i] - 0.5 * xext[i];
+        x1[i] = xcen[i] + 0.5 * xext[i];
+    }
+
+    music::ilog << "DEBUG: Expected refinement region from config (level " << level << "):" << std::endl;
+    music::ilog << "  ref_center: (" << xcen[0] << ", " << xcen[1] << ", " << xcen[2] << ")" << std::endl;
+    music::ilog << "  ref_extent: (" << xext[0] << ", " << xext[1] << ", " << xext[2] << ")" << std::endl;
+    music::ilog << "  Expected box: [" << x0[0] << ":" << x1[0] << ", "
+                << x0[1] << ":" << x1[1] << ", " << x0[2] << ":" << x1[2] << "]" << std::endl;
+}
 
 // Output real-space density field
 template<typename GridType>
 void write_density_real(const GridType& field, int level, const std::string& prefix = "delta") {
     char filename[256];
     snprintf(filename, 256, "%s_level%d_real.dat", prefix.c_str(), level);
-    
+
     std::ofstream ofs(filename, std::ios::binary);
     if (!ofs.good()) {
         music::wlog << "Could not open " << filename << " for writing!" << std::endl;
         return;
     }
-    
+
     size_t nx = field.size(0);
     size_t ny = field.size(1);
     size_t nz = field.size(2);
-    
-    // Write header
+
+    // Get offset information if available (for subgrids)
+    int ox = 0, oy = 0, oz = 0;
+    try {
+        ox = field.offset(0);
+        oy = field.offset(1);
+        oz = field.offset(2);
+    } catch (...) {
+        // Base grid has no offset, leave as 0
+    }
+
+    // Write header with offset information
     ofs.write(reinterpret_cast<const char*>(&nx), sizeof(size_t));
     ofs.write(reinterpret_cast<const char*>(&ny), sizeof(size_t));
     ofs.write(reinterpret_cast<const char*>(&nz), sizeof(size_t));
-    
+    ofs.write(reinterpret_cast<const char*>(&ox), sizeof(int));
+    ofs.write(reinterpret_cast<const char*>(&oy), sizeof(int));
+    ofs.write(reinterpret_cast<const char*>(&oz), sizeof(int));
+
     // Write data
     for (size_t i = 0; i < nx; ++i) {
         for (size_t j = 0; j < ny; ++j) {
@@ -41,9 +94,25 @@ void write_density_real(const GridType& field, int level, const std::string& pre
         }
     }
     ofs.close();
-    
+
     music::ilog << "DEBUG: Wrote real-space field to " << filename << std::endl;
     music::ilog << "  Grid size: " << nx << " × " << ny << " × " << nz << std::endl;
+    music::ilog << "  Grid offset: (" << ox << ", " << oy << ", " << oz << ")" << std::endl;
+
+    // Compute and display physical box coordinates
+    size_t ngrid = 1ul << level;
+    double dx = 1.0 / (double)ngrid;
+    double x0 = ox * dx;
+    double y0 = oy * dx;
+    double z0 = oz * dx;
+    double x1 = x0 + nx * dx;
+    double y1 = y0 + ny * dx;
+    double z1 = z0 + nz * dx;
+
+    music::ilog << "  Physical region: [" << x0 << ":" << x1 << ", "
+                << y0 << ":" << y1 << ", " << z0 << ":" << z1 << "]" << std::endl;
+    music::ilog << "  Physical center: (" << 0.5*(x0+x1) << ", "
+                << 0.5*(y0+y1) << ", " << 0.5*(z0+z1) << ")" << std::endl;
 }
 
 // Output Fourier-space density field

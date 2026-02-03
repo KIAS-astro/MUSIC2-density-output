@@ -49,6 +49,7 @@ extern "C"
 #include <fd_schemes.hh>
 #include <random.hh>
 #include <densities.hh>
+#include <output_debug_fields.hh>
 
 #include <convolution_kernel.hh>
 #include <perturbation_theory.hh>
@@ -628,6 +629,46 @@ int main(int argc, const char *argv[])
 
 			normalize_density(f);
 
+			//═══════════════════════════════════════════════════════════════
+			// DEBUG OUTPUT: Write density field to files (after normalization)
+			//═══════════════════════════════════════════════════════════════
+			{
+				music::ilog << "=== Writing debug density field output (after normalization) ===" << std::endl;
+				real_t boxlength = cf.get_value<double>("setup", "boxlength");
+				unsigned levelmin_TF = f.levelmin();
+				unsigned levelmax = f.levelmax();
+
+				// Loop over all levels
+				for (unsigned ilevel = levelmin_TF; ilevel <= levelmax; ++ilevel) {
+					auto* pgrid = f.get_grid(ilevel);
+
+					if (pgrid) {
+						music::ilog.Print("Writing density field for level %d", ilevel);
+
+						// Print expected refinement region for comparison (zoom-in levels only)
+						if (ilevel > levelmin_TF) {
+							debug_output::print_expected_refinement_region(cf, ilevel);
+						}
+
+						// Print statistics
+						debug_output::print_field_statistics(*pgrid,
+							"density field level " + std::to_string(ilevel));
+
+						// Write real space
+						debug_output::write_density_real(*pgrid, ilevel, "delta");
+
+						// Write Fourier space
+						debug_output::write_density_fourier(*pgrid, ilevel, "delta");
+
+						// Write power spectrum
+						debug_output::write_power_spectrum(*pgrid, ilevel, boxlength, "delta");
+					}
+				}
+
+				music::ilog << "=== Finished writing debug output ===" << std::endl;
+			}
+			//═══════════════════════════════════════════════════════════════
+
 			music::ulog.Print("Writing CDM data");
 			the_output_plugin->write_dm_mass(f);
 			the_output_plugin->write_dm_density(f);
@@ -956,6 +997,58 @@ int main(int argc, const char *argv[])
 			if (!do_baryons || !tf_has_velocities)
 				my_tf_type = theta_matter;
 
+			//═══════════════════════════════════════════════════════════════
+			// GENERATE DENSITY FIELD (DELTA) FOR DEBUG OUTPUT
+			//═══════════════════════════════════════════════════════════════
+			music::ilog << "===============================================================================" << std::endl;
+			music::ilog << "   COMPUTING DENSITY FIELD (delta) for debug output" << std::endl;
+			music::ilog << "-------------------------------------------------------------------------------" << std::endl;
+
+			grid_hierarchy f_delta(nbnd);
+			tf_type delta_tf_type = delta_cdm;
+			if (!do_baryons || !the_cosmo_calc->transfer_function_->tf_is_distinct())
+				delta_tf_type = delta_matter;
+
+			GenerateDensityHierarchy(cf, the_cosmo_calc.get(), delta_tf_type, rh_TF, rand, f_delta, false, false);
+			coarsen_density(rh_Poisson, f_delta, use_fourier_coarsening);
+			f_delta.add_refinement_mask(rh_Poisson.get_coord_shift());
+			normalize_density(f_delta);
+
+			//═══════════════════════════════════════════════════════════════
+			// DEBUG OUTPUT: Write DENSITY field to files (after normalization)
+			//═══════════════════════════════════════════════════════════════
+			{
+				music::ilog << "=== Writing debug DENSITY field output (after normalization) ===" << std::endl;
+				real_t boxlength = cf.get_value<double>("setup", "boxlength");
+				unsigned levelmin_TF = f_delta.levelmin();
+				unsigned levelmax = f_delta.levelmax();
+
+				for (unsigned ilevel = levelmin_TF; ilevel <= levelmax; ++ilevel) {
+					auto* pgrid = f_delta.get_grid(ilevel);
+
+					if (pgrid) {
+						music::ilog.Print("Writing density field for level %d", ilevel);
+
+						if (ilevel > levelmin_TF) {
+							debug_output::print_expected_refinement_region(cf, ilevel);
+						}
+
+						debug_output::print_field_statistics(*pgrid,
+							"density field level " + std::to_string(ilevel));
+
+						debug_output::write_density_real(*pgrid, ilevel, "delta");
+						debug_output::write_density_fourier(*pgrid, ilevel, "delta");
+						debug_output::write_power_spectrum(*pgrid, ilevel, boxlength, "delta");
+					}
+				}
+
+				music::ilog << "=== Finished writing debug density output ===" << std::endl;
+			}
+			//═══════════════════════════════════════════════════════════════
+
+			music::ilog << "Deallocating density field (keeping only velocity field)" << std::endl;
+			f_delta.deallocate();
+
 			music::ilog << "===============================================================================" << std::endl;
 			if (my_tf_type == theta_matter)
 			{
@@ -971,6 +1064,50 @@ int main(int argc, const char *argv[])
 			coarsen_density(rh_Poisson, f, use_fourier_coarsening);
 			f.add_refinement_mask(rh_Poisson.get_coord_shift());
 			normalize_density(f);
+
+			//═══════════════════════════════════════════════════════════════
+			// DEBUG OUTPUT: Write field to files (after normalization)
+			// NOTE: In dm_only mode, f contains theta (velocity), not delta (density)
+			//═══════════════════════════════════════════════════════════════
+			{
+				music::ilog << "=== Writing debug field output (after normalization) ===" << std::endl;
+				if (my_tf_type == theta_matter || my_tf_type == theta_cdm) {
+					music::ilog << "NOTE: Field is velocity potential (theta), not density (delta)" << std::endl;
+				}
+				real_t boxlength = cf.get_value<double>("setup", "boxlength");
+				unsigned levelmin_TF = f.levelmin();
+				unsigned levelmax = f.levelmax();
+
+				// Loop over all levels
+				for (unsigned ilevel = levelmin_TF; ilevel <= levelmax; ++ilevel) {
+					auto* pgrid = f.get_grid(ilevel);
+
+					if (pgrid) {
+						music::ilog.Print("Writing field for level %d", ilevel);
+
+						// Print expected refinement region for comparison (zoom-in levels only)
+						if (ilevel > levelmin_TF) {
+							debug_output::print_expected_refinement_region(cf, ilevel);
+						}
+
+						// Print statistics
+						debug_output::print_field_statistics(*pgrid,
+							"field level " + std::to_string(ilevel));
+
+						// Write real space
+						debug_output::write_density_real(*pgrid, ilevel, "theta");
+
+						// Write Fourier space
+						debug_output::write_density_fourier(*pgrid, ilevel, "theta");
+
+						// Write power spectrum
+						debug_output::write_power_spectrum(*pgrid, ilevel, boxlength, "theta");
+					}
+				}
+
+				music::ilog << "=== Finished writing debug output ===" << std::endl;
+			}
+			//═══════════════════════════════════════════════════════════════
 
 			if (dm_only)
 			{
@@ -1173,6 +1310,46 @@ int main(int argc, const char *argv[])
 				coarsen_density(rh_Poisson, f, use_fourier_coarsening);
 				f.add_refinement_mask(rh_Poisson.get_coord_shift());
 				normalize_density(f);
+
+				//═══════════════════════════════════════════════════════════════
+				// DEBUG OUTPUT: Write density field to files (after normalization)
+				//═══════════════════════════════════════════════════════════════
+				{
+					music::ilog << "=== Writing debug density field output (after normalization) ===" << std::endl;
+					real_t boxlength = cf.get_value<double>("setup", "boxlength");
+					unsigned levelmin_TF = f.levelmin();
+					unsigned levelmax = f.levelmax();
+
+					// Loop over all levels
+					for (unsigned ilevel = levelmin_TF; ilevel <= levelmax; ++ilevel) {
+						auto* pgrid = f.get_grid(ilevel);
+
+						if (pgrid) {
+							music::ilog.Print("Writing density field for level %d", ilevel);
+
+							// Print expected refinement region for comparison (zoom-in levels only)
+							if (ilevel > levelmin_TF) {
+								debug_output::print_expected_refinement_region(cf, ilevel);
+							}
+
+							// Print statistics
+							debug_output::print_field_statistics(*pgrid,
+								"density field level " + std::to_string(ilevel));
+
+							// Write real space
+							debug_output::write_density_real(*pgrid, ilevel, "delta");
+
+							// Write Fourier space
+							debug_output::write_density_fourier(*pgrid, ilevel, "delta");
+
+							// Write power spectrum
+							debug_output::write_power_spectrum(*pgrid, ilevel, boxlength, "delta");
+						}
+					}
+
+					music::ilog << "=== Finished writing debug output ===" << std::endl;
+				}
+				//═══════════════════════════════════════════════════════════════
 
 				music::ulog.Print("Writing CDM data");
 				the_output_plugin->write_dm_density(f);
