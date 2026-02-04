@@ -161,6 +161,16 @@ public:
                 xcref_[2] = fmod(x0ref_[2] + 0.5 * lxref_[2], 1.0);
             }
 
+            // Override x0ref_ for full-extent dimensions (slab geometry)
+            // For dimensions with ref_extent >= 0.99, ignore ref_center and use full [0,1] range
+            for (int i = 0; i < 3; ++i) {
+                if (lxref_[i] >= 0.99) {
+                    x0ref_[i] = 0.0;
+                    xcref_[i] = 0.5;
+                    lxref_[i] = 1.0;
+                }
+            }
+
             // conditions should be added here
             {
                 do_extra_padding_ = false;
@@ -188,10 +198,21 @@ public:
         if (!do_extra_padding_)
             pad = 0.0;
 
+        // Debug output for slab geometry
+        music::ilog.Print("get_AABB: x0ref=[%.4f,%.4f,%.4f], lxref=[%.4f,%.4f,%.4f], pad=%.4f",
+                         x0ref_[0], x0ref_[1], x0ref_[2],
+                         lxref_[0], lxref_[1], lxref_[2], pad);
+
         for (int i = 0; i < 3; ++i)
         {
-            left[i] = x0ref_[i] - pad;
-            right[i] = x0ref_[i] + lxref_[i] + pad;
+            // If ref_extent >= 0.99 in this dimension, don't add padding (slab geometry)
+            double pad_i = (lxref_[i] >= 0.99) ? 0.0 : pad;
+
+            left[i] = x0ref_[i] - pad_i;
+            right[i] = x0ref_[i] + lxref_[i] + pad_i;
+
+            if (lxref_[i] >= 0.99)
+                music::ilog.Print("  Dimension %d: full extent detected, skipping padding", i);
         }
     }
 
@@ -200,13 +221,26 @@ public:
         for (int i = 0; i < 3; ++i)
         {
             double dx = right[i] - left[i];
-            if (dx < -0.5)
-                dx += 1.0;
-            else if (dx > 0.5)
-                dx -= 1.0;
-            x0ref_[i] = left[i];
-            lxref_[i] = dx;
-            xcref_[i] = left[i] + 0.5 * dx;
+
+            // For slab geometry (full extent ~1.0), don't treat as wrapping
+            if (std::abs(dx - 1.0) < 0.01)
+            {
+                // Full extent case: keep dx = 1.0, set offset to 0
+                x0ref_[i] = 0.0;
+                lxref_[i] = 1.0;
+                xcref_[i] = 0.5;
+            }
+            else
+            {
+                // Normal case: handle periodic wrapping
+                if (dx < -0.5)
+                    dx += 1.0;
+                else if (dx > 0.5)
+                    dx -= 1.0;
+                x0ref_[i] = left[i];
+                lxref_[i] = dx;
+                xcref_[i] = left[i] + 0.5 * dx;
+            }
         }
         // fprintf(stderr,"left = %f,%f,%f - right = %f,%f,%f\n",left[0],left[1],left[2],right[0],right[1],right[2]);
     }
@@ -226,7 +260,11 @@ public:
             else if (dx > 0.5)
                 dx -= 1.0;
 
-            check &= ((dx >= padding_fine_) & (dx <= lxref_[i] - padding_fine_));
+            // If ref_extent >= 0.99 in this dimension (slab geometry), skip padding check
+            if (lxref_[i] >= 0.99)
+                check &= true;  // Always passes for full-extent dimensions
+            else
+                check &= ((dx >= padding_fine_) & (dx <= lxref_[i] - padding_fine_));
         }
         return check;
     }

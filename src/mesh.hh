@@ -1547,14 +1547,20 @@ public:
 		}
 
 		//... make sure bounding box lies in domain
-		il = (il + nresmax) % nresmax;
-		ir = (ir + nresmax) % nresmax;
-		jl = (jl + nresmax) % nresmax;
-		jr = (jr + nresmax) % nresmax;
-		kl = (kl + nresmax) % nresmax;
-		kr = (kr + nresmax) % nresmax;
+		// Special handling for full-extent dimensions (slab geometry: ref_extent = 1.0)
+		bool full_extent_x = (ir == nresmax);
+		bool full_extent_y = (jr == nresmax);
+		bool full_extent_z = (kr == nresmax);
 
-		if (il >= ir || jl >= jr || kl >= kr)
+		il = (il + nresmax) % nresmax;
+		ir = full_extent_x ? nresmax : (ir + nresmax) % nresmax;
+		jl = (jl + nresmax) % nresmax;
+		jr = full_extent_y ? nresmax : (jr + nresmax) % nresmax;
+		kl = (kl + nresmax) % nresmax;
+		kr = full_extent_z ? nresmax : (kr + nresmax) % nresmax;
+
+		// Check bounds, but skip check for full-extent dimensions
+		if ((!full_extent_x && il >= ir) || (!full_extent_y && jl >= jr) || (!full_extent_z && kl >= kr))
 		{
 			music::elog.Print("Internal refinement bounding box error: [%d,%d]x[%d,%d]x[%d,%d]", il, ir, jl, jr, kl, kr);
 			throw std::runtime_error("refinement_hierarchy: Internal refinement bounding box error 1");
@@ -1596,16 +1602,23 @@ public:
 
 		padding_ = cf_.get_value_safe<unsigned>("setup", "padding", 8);
 
+		// Update full-extent flags for parent level loop (reuse variables from line 1551)
+		// Full extent means the dimension spans the entire domain at levelmax
+		full_extent_x = (ir - il == nresmax);
+		full_extent_y = (jr - jl == nresmax);
+		full_extent_z = (kr - kl == nresmax);
+
 		//... determine position of coarser grids
 		for (unsigned ilevel = levelmax_ - 1; ilevel > levelmin_; --ilevel)
 		{
-			il = (int)((double)il * 0.5 - padding_);
-			jl = (int)((double)jl * 0.5 - padding_);
-			kl = (int)((double)kl * 0.5 - padding_);
+			// Skip padding for full-extent dimensions (slab geometry)
+			il = (int)((double)il * 0.5 - (full_extent_x ? 0 : padding_));
+			jl = (int)((double)jl * 0.5 - (full_extent_y ? 0 : padding_));
+			kl = (int)((double)kl * 0.5 - (full_extent_z ? 0 : padding_));
 
-			ir = (int)((double)ir * 0.5 + padding_);
-			jr = (int)((double)jr * 0.5 + padding_);
-			kr = (int)((double)kr * 0.5 + padding_);
+			ir = (int)((double)ir * 0.5 + (full_extent_x ? 0 : padding_));
+			jr = (int)((double)jr * 0.5 + (full_extent_y ? 0 : padding_));
+			kr = (int)((double)kr * 0.5 + (full_extent_z ? 0 : padding_));
 
 			//... align with coarser grids ...
 			if (align_top_)
@@ -1659,7 +1672,10 @@ public:
 				kr += (nres - kr) % coarse_block;
 			}
 
-			if (il >= ir || jl >= jr || kl >= kr || il < 0 || jl < 0 || kl < 0)
+			// Check bounds, accounting for full-extent dimensions (slab geometry)
+			// For full-extent dimensions, skip both ordering and negative checks
+			if ((!full_extent_x && il >= ir) || (!full_extent_y && jl >= jr) || (!full_extent_z && kl >= kr) ||
+			    (!full_extent_x && il < 0) || (!full_extent_y && jl < 0) || (!full_extent_z && kl < 0))
 			{
 				music::elog.Print("Internal refinement bounding box error: [%d,%d]x[%d,%d]x[%d,%d], level=%d", il, ir, jl, jr, kl, kr, ilevel);
 				throw std::runtime_error("refinement_hierarchy: Internal refinement bounding box error 2");
@@ -1720,11 +1736,14 @@ public:
 		}
 
 		// do a consistency check that largest subgrid in zoom is not larger than half the box size
+		// Skip check for full-extent dimensions (slab geometry)
 		for (unsigned ilevel = levelmin_ + 1; ilevel <= levelmax_; ++ilevel)
 		{
-			if (len_[ilevel][0] > index_t(1ul << (ilevel - 1)) ||
-					len_[ilevel][1] > index_t(1ul << (ilevel - 1)) ||
-					len_[ilevel][2] > index_t(1ul << (ilevel - 1)))
+			bool check_x = !full_extent_x && (len_[ilevel][0] > index_t(1ul << (ilevel - 1)));
+			bool check_y = !full_extent_y && (len_[ilevel][1] > index_t(1ul << (ilevel - 1)));
+			bool check_z = !full_extent_z && (len_[ilevel][2] > index_t(1ul << (ilevel - 1)));
+
+			if (check_x || check_y || check_z)
 			{
 				music::elog.Print("On level %d, subgrid is larger than half the box. This is not allowed!", ilevel);
 				throw std::runtime_error("Fatal: Subgrid larger than half boxin zoom.");
