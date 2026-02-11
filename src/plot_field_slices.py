@@ -93,24 +93,31 @@ def compute_absolute_offsets(data_dir, prefix, levels):
     return abs_offsets
 
 
-def make_canvas(data, size, offset, ngrid, axis, slice_idx):
+def make_canvas(data, size, offset, ngrid, axis, slice_idx, shift=(0, 0, 0)):
     """Extract a 1-cell slice and embed it in a full-box canvas.
 
     Parameters
     ----------
     data : ndarray (nx, ny, nz)
     size : (nx, ny, nz)
-    offset : (ox, oy, oz)
+    offset : (ox, oy, oz)  -- offset in shifted coordinates
     ngrid : int  -- 2**level, the full box grid count
     axis : int   -- axis perpendicular to the slice (0=x, 1=y, 2=z)
-    slice_idx : int -- index in the *full box* grid along that axis
+    slice_idx : int -- index in the *full box* grid along that axis (unshifted)
+    shift : (sx, sy, sz) -- domain shift in grid cells at this level
+                           (positive shift means data was shifted +x, so we
+                            need to look at slice_idx + shift to find the
+                            corresponding data)
 
     Returns
     -------
     canvas : 2-D ndarray (ngrid, ngrid) filled with NaN outside the subgrid
     valid  : bool -- whether the requested slice intersects the subgrid
     """
-    local_idx = slice_idx - offset[axis]
+    # Convert unshifted slice index to shifted coordinates
+    # The data is stored in shifted coords, so we add the shift
+    shifted_slice_idx = (slice_idx + shift[axis]) % ngrid
+    local_idx = shifted_slice_idx - offset[axis]
 
     if local_idx < 0 or local_idx >= size[axis]:
         return np.full((ngrid, ngrid), np.nan), False
@@ -124,11 +131,24 @@ def make_canvas(data, size, offset, ngrid, axis, slice_idx):
     slicer[axis] = local_idx
     plane = data[tuple(slicer)]  # shape (size[a0], size[a1])
 
-    # Embed into canvas
+    # Embed into canvas at UNSHIFTED position
+    # The offset is in shifted coords, convert back to unshifted
     canvas = np.full((ngrid, ngrid), np.nan)
-    i0 = offset[a0]
-    j0 = offset[a1]
-    canvas[i0:i0 + size[a0], j0:j0 + size[a1]] = plane
+    i0 = (offset[a0] - shift[a0]) % ngrid
+    j0 = (offset[a1] - shift[a1]) % ngrid
+
+    # Handle wrap-around if region crosses periodic boundary
+    ni = size[a0]
+    nj = size[a1]
+
+    if i0 + ni <= ngrid and j0 + nj <= ngrid:
+        # Simple case: no wrap-around
+        canvas[i0:i0 + ni, j0:j0 + nj] = plane
+    else:
+        # Handle wrap-around with modular indexing
+        for ii in range(ni):
+            for jj in range(nj):
+                canvas[(i0 + ii) % ngrid, (j0 + jj) % ngrid] = plane[ii, jj]
 
     return canvas, True
 
@@ -139,11 +159,22 @@ def fractional_to_index(frac, ngrid):
     return max(0, min(idx, ngrid - 1))
 
 
-def plot_levels(data_dir, prefix, levels, slice_z_frac, slice_y_frac, outname):
+def plot_levels(data_dir, prefix, levels, slice_z_frac, slice_y_frac, outname,
+                shift_coarse=(0, 0, 0), levelmin_shift=None, abs_offsets=None):
     """Create the multi-level slice figure for one field.
 
     Two rows: top = x-y plane (z-slice), bottom = x-z plane (y-slice).
     One column per level.
+
+    Parameters
+    ----------
+    shift_coarse : (int, int, int)
+        Domain shift in coarse (levelmin) cells, from MUSIC log
+        "Domain will be shifted by (X, Y, Z)"
+    levelmin_shift : int
+        The levelmin at which shift_coarse is defined. If None, uses min(levels).
+    abs_offsets : dict
+        Pre-computed absolute offsets for all levels. If None, computed from levels.
     """
     n_levels = len(levels)
     fig, axes = plt.subplots(2, n_levels, figsize=(5 * n_levels, 10),
@@ -151,8 +182,13 @@ def plot_levels(data_dir, prefix, levels, slice_z_frac, slice_y_frac, outname):
 
     field_label = r"$\delta$" if prefix == "delta" else r"$\theta$"
 
-    # Compute absolute offsets from the parent-relative ones in the files
-    abs_offsets = compute_absolute_offsets(data_dir, prefix, levels)
+    # Use pre-computed offsets or compute from levels (fallback)
+    if abs_offsets is None:
+        abs_offsets = compute_absolute_offsets(data_dir, prefix, levels)
+
+    # Determine levelmin for shift scaling
+    if levelmin_shift is None:
+        levelmin_shift = min(levels)
 
     # First pass: read all data and compute global colour limits
     vmin_global = np.inf
@@ -165,13 +201,17 @@ def plot_levels(data_dir, prefix, levels, slice_z_frac, slice_y_frac, outname):
         offset = abs_offsets[level]
         ngrid = 2 ** level
 
+        # Scale shift from coarse level to current level
+        scale = 2 ** (level - levelmin_shift)
+        shift = tuple(s * scale for s in shift_coarse)
+
         z_idx = fractional_to_index(slice_z_frac, ngrid)
         canvas_xy, valid_xy = make_canvas(data, size, offset, ngrid,
-                                          axis=2, slice_idx=z_idx)
+                                          axis=2, slice_idx=z_idx, shift=shift)
 
         y_idx = fractional_to_index(slice_y_frac, ngrid)
         canvas_xz, valid_xz = make_canvas(data, size, offset, ngrid,
-                                          axis=1, slice_idx=y_idx)
+                                          axis=1, slice_idx=y_idx, shift=shift)
 
         canvas_cache[level] = {
             'xy': canvas_xy, 'valid_xy': valid_xy, 'z_idx': z_idx,
@@ -276,6 +316,14 @@ def main():
                              "default 0.5)")
     parser.add_argument("--out-prefix", default="slice", dest="out_prefix",
                         help="Prefix for output PNG files (default: slice)")
+    parser.add_argument("--shift", nargs=3, type=int, default=[0, 0, 0],
+                        metavar=("X", "Y", "Z"),
+                        help="Domain shift in coarse cells from MUSIC log "
+                             "'Domain will be shifted by (X, Y, Z)' (default: 0 0 0)")
+    parser.add_argument("--levelmin-shift", type=int, default=None,
+                        dest="levelmin_shift",
+                        help="The levelmin at which --shift is defined "
+                             "(default: auto-detect from data)")
     args = parser.parse_args()
 
     for prefix in args.fields:
@@ -286,13 +334,30 @@ def main():
             print(f"No {prefix}_level*_real.dat files found in {args.dir}")
             continue
 
+        shift_coarse = tuple(args.shift)
+
+        # Always detect ALL available levels to compute correct absolute offsets
+        all_levels = detect_levels(args.dir, prefix)
+        if not all_levels:
+            print(f"No {prefix}_level*_real.dat files found in {args.dir}")
+            continue
+
+        # Use the true levelmin for shift scaling
+        levelmin_shift = args.levelmin_shift if args.levelmin_shift is not None else min(all_levels)
+
         print(f"\n{'='*60}")
         print(f"Plotting {prefix} field for levels {levels}")
+        print(f"  (All available levels: {all_levels})")
         print(f"  z-slice fraction: {args.slice_z}")
         print(f"  y-slice fraction: {args.slice_y}")
+        if any(s != 0 for s in shift_coarse):
+            print(f"  Domain shift (coarse): ({shift_coarse[0]}, {shift_coarse[1]}, {shift_coarse[2]})")
+            if levelmin_shift is not None:
+                print(f"  Shift defined at levelmin: {levelmin_shift}")
         print(f"{'='*60}")
 
-        abs_offsets = compute_absolute_offsets(args.dir, prefix, levels)
+        # Compute absolute offsets using ALL levels (needed for correct hierarchy)
+        abs_offsets = compute_absolute_offsets(args.dir, prefix, all_levels)
         for level in levels:
             fname = os.path.join(args.dir, f"{prefix}_level{level}_real.dat")
             _, size, raw_off = read_field(fname)
@@ -308,7 +373,9 @@ def main():
 
         outname = f"{args.out_prefix}_{prefix}.png"
         plot_levels(args.dir, prefix, levels,
-                    args.slice_z, args.slice_y, outname)
+                    args.slice_z, args.slice_y, outname,
+                    shift_coarse=shift_coarse, levelmin_shift=levelmin_shift,
+                    abs_offsets=abs_offsets)
 
 
 if __name__ == "__main__":
