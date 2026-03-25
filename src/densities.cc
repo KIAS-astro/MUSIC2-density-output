@@ -373,10 +373,17 @@ void GenerateDensityHierarchy(config_file &cf, const cosmology::calculator* cc, 
 					refh.size(levelmin + i, 1), refh.size(levelmin + i, 2));
 
 			if( refh.get_margin() > 0 ){
-				fine = new PaddedDensitySubGrid<real_t>( refh.offset(levelmin + i, 0), refh.offset(levelmin + i, 1), refh.offset(levelmin + i, 2),
-																								 refh.size(levelmin + i, 0), refh.size(levelmin + i, 1), refh.size(levelmin + i, 2),
-																								 refh.get_margin(), refh.get_margin(), refh.get_margin() );
-				music::ilog.Print("    margin = %d",refh.get_margin());
+				// For full-extent (slab) dimensions, use margin=0: fft_interpolate would
+				// request nzc = (full_size + 2*margin)/2 > coarse_size causing out-of-bounds
+				// access and wrong phase normalization.
+				unsigned level = levelmin + i;
+				int mx = (refh.size(level, 0) == (size_t)(1 << level)) ? 0 : refh.get_margin();
+				int my = (refh.size(level, 1) == (size_t)(1 << level)) ? 0 : refh.get_margin();
+				int mz = (refh.size(level, 2) == (size_t)(1 << level)) ? 0 : refh.get_margin();
+				fine = new PaddedDensitySubGrid<real_t>( refh.offset(level, 0), refh.offset(level, 1), refh.offset(level, 2),
+																								 refh.size(level, 0), refh.size(level, 1), refh.size(level, 2),
+																								 mx, my, mz );
+				music::ilog.Print("    margin = %d/%d/%d (x/y/z)", mx, my, mz);
 			}else{
 				fine = new PaddedDensitySubGrid<real_t>( refh.offset(levelmin + i, 0), refh.offset(levelmin + i, 1), refh.offset(levelmin + i, 2),
 																								 refh.size(levelmin + i, 0), refh.size(levelmin + i, 1), refh.size(levelmin + i, 2));
