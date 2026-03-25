@@ -284,8 +284,9 @@ void RNG_panphasia::fill_grid(int level, DensityGrid<real_t> &R)
         ileft_corner[k] = (ileft[k] - nx[k] / 4 + (1 << level)) % (1 << level); // Isolated
         ileft_corner[k] = (ileft[k] - nx[k] / 4 + (1 << level)) % (1 << level); // Isolated
       }else{
-        ileft_corner[k] = (ileft[k] - margins_[k] + (1 << level)) % (1 << level); // Isolated
-        ileft_corner[k] = (ileft[k] - margins_[k] + (1 << level)) % (1 << level); // Isolated
+        int eff_margin = prefh_->get_margin_for_dim(level, k);
+        ileft_corner[k] = (ileft[k] - eff_margin + (1 << level)) % (1 << level); // Isolated
+        ileft_corner[k] = (ileft[k] - eff_margin + (1 << level)) % (1 << level); // Isolated
       }
     }
     iexpand_left[k] = (ileft_corner[k] % grid_m_ == 0) ? 0 : ileft_corner[k] % grid_m_;

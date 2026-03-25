@@ -78,6 +78,8 @@ void perform(kernel *pk, void *pd, bool shift, bool fix, bool flip)
 	{
 
 		const size_t veclen = cparam_.nz / 2 + 1;
+		const double ryx = cparam_.lx / cparam_.ly;
+		const double rzx = cparam_.lx / cparam_.lz;
 
 		double *kvec = new double[veclen];
 		double *Tkvec = new double[veclen];
@@ -101,7 +103,7 @@ void perform(kernel *pk, void *pd, bool shift, bool fix, bool flip)
 					if (ky > cparam_.ny / 2)
 						ky -= cparam_.ny;
 
-					kvec[k] = sqrt(kx * kx + ky * ky + kz * kz);
+					kvec[k] = sqrt(kx*kx + ky*ky*ryx*ryx + kz*kz*rzx*rzx);
 					argvec[k] = (kx + ky + kz) * dstag;
 				}
 
@@ -212,9 +214,9 @@ public:
 				cparam_.ny = 2 * prefh_->size(ilevel, 1);
 				cparam_.nz = 2 * prefh_->size(ilevel, 2);
 			}else{
-				cparam_.nx = prefh_->size(ilevel, 0) + 2*prefh_->get_margin();
-				cparam_.ny = prefh_->size(ilevel, 1) + 2*prefh_->get_margin();
-				cparam_.nz = prefh_->size(ilevel, 2) + 2*prefh_->get_margin();
+				cparam_.nx = prefh_->size(ilevel, 0) + 2*prefh_->get_margin_for_dim(ilevel, 0);
+				cparam_.ny = prefh_->size(ilevel, 1) + 2*prefh_->get_margin_for_dim(ilevel, 1);
+				cparam_.nz = prefh_->size(ilevel, 2) + 2*prefh_->get_margin_for_dim(ilevel, 2);
 			}
 
 			cparam_.lx = (double)cparam_.nx / (double)(1 << ilevel) * boxlength_;

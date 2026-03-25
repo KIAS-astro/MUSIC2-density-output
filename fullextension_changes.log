@@ -1,0 +1,126 @@
+diff --git a/src/convolution_kernel.cc b/src/convolution_kernel.cc
+index 4a4efc9..1c9a08f 100644
+--- a/src/convolution_kernel.cc
++++ b/src/convolution_kernel.cc
+@@ -78,6 +78,8 @@ void perform(kernel *pk, void *pd, bool shift, bool fix, bool flip)
+ 	{
+ 
+ 		const size_t veclen = cparam_.nz / 2 + 1;
++		const double ryx = cparam_.lx / cparam_.ly;
++		const double rzx = cparam_.lx / cparam_.lz;
+ 
+ 		double *kvec = new double[veclen];
+ 		double *Tkvec = new double[veclen];
+@@ -101,7 +103,7 @@ void perform(kernel *pk, void *pd, bool shift, bool fix, bool flip)
+ 					if (ky > cparam_.ny / 2)
+ 						ky -= cparam_.ny;
+ 
+-					kvec[k] = sqrt(kx * kx + ky * ky + kz * kz);
++					kvec[k] = sqrt(kx*kx + ky*ky*ryx*ryx + kz*kz*rzx*rzx);
+ 					argvec[k] = (kx + ky + kz) * dstag;
+ 				}
+ 
+@@ -212,9 +214,9 @@ public:
+ 				cparam_.ny = 2 * prefh_->size(ilevel, 1);
+ 				cparam_.nz = 2 * prefh_->size(ilevel, 2);
+ 			}else{
+-				cparam_.nx = prefh_->size(ilevel, 0) + 2*prefh_->get_margin();
+-				cparam_.ny = prefh_->size(ilevel, 1) + 2*prefh_->get_margin();
+-				cparam_.nz = prefh_->size(ilevel, 2) + 2*prefh_->get_margin();
++				cparam_.nx = prefh_->size(ilevel, 0) + 2*prefh_->get_margin_for_dim(ilevel, 0);
++				cparam_.ny = prefh_->size(ilevel, 1) + 2*prefh_->get_margin_for_dim(ilevel, 1);
++				cparam_.nz = prefh_->size(ilevel, 2) + 2*prefh_->get_margin_for_dim(ilevel, 2);
+ 			}
+ 
+ 			cparam_.lx = (double)cparam_.nx / (double)(1 << ilevel) * boxlength_;
+diff --git a/src/mesh.hh b/src/mesh.hh
+index 7704341..15e2cb3 100644
+--- a/src/mesh.hh
++++ b/src/mesh.hh
+@@ -1898,6 +1898,14 @@ public:
+ 		return margin_;
+ 	}
+ 
++	//! get the effective margin for a given level and dimension:
++	//! returns 0 for full-extent dimensions (periodic), margin_ otherwise
++	int get_margin_for_dim(int ilevel, int idim) const
++	{
++		if (margin_ < 0) return margin_;
++		return (size(ilevel, idim) == (size_t)(1ul << ilevel)) ? 0 : margin_;
++	}
++
+ 	//! get the total shift of the coordinate system in box coordinates
+ 	const double *get_coord_shift(void) const
+ 	{
+diff --git a/src/plugins/random_music.cc b/src/plugins/random_music.cc
+index 6eeb798..e2beece 100644
+--- a/src/plugins/random_music.cc
++++ b/src/plugins/random_music.cc
+@@ -227,9 +227,9 @@ void RNG_music::compute_random_numbers(void)
+ 
+     std::array<int,3> margin;
+     if( prefh_->get_margin()>0 ){
+-      margin[0] = prefh_->get_margin();
+-      margin[1] = prefh_->get_margin();
+-      margin[2] = prefh_->get_margin();
++      margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
++      margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
++      margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
+     }else{
+       margin[0] = prefh_->size(ilevel, 0)/2;
+       margin[1] = prefh_->size(ilevel, 1)/2;
+@@ -404,9 +404,9 @@ void RNG_music::store_rnd(int ilevel, rng *prng)
+ 
+       std::array<int,3> margin;
+       if( prefh_->get_margin()>0 ){
+-        margin[0] = prefh_->get_margin();
+-        margin[1] = prefh_->get_margin();
+-        margin[2] = prefh_->get_margin();
++        margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
++        margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
++        margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
+       }else{
+         margin[0] = prefh_->size(ilevel, 0)/2;
+         margin[1] = prefh_->size(ilevel, 1)/2;
+@@ -461,9 +461,9 @@ void RNG_music::store_rnd(int ilevel, rng *prng)
+     {
+       std::array<int,3> margin;
+       if( prefh_->get_margin()>0 ){
+-        margin[0] = prefh_->get_margin();
+-        margin[1] = prefh_->get_margin();
+-        margin[2] = prefh_->get_margin();
++        margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
++        margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
++        margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
+       }else{
+         margin[0] = prefh_->size(ilevel, 0)/2;
+         margin[1] = prefh_->size(ilevel, 1)/2;
+@@ -525,9 +525,9 @@ void RNG_music::fill_grid(int ilevel, DensityGrid<real_t> &A)
+     {
+       std::array<int,3> margin;
+       if( prefh_->get_margin()>0 ){
+-        margin[0] = prefh_->get_margin();
+-        margin[1] = prefh_->get_margin();
+-        margin[2] = prefh_->get_margin();
++        margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
++        margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
++        margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
+       }else{
+         margin[0] = prefh_->size(ilevel, 0)/2;
+         margin[1] = prefh_->size(ilevel, 1)/2;
+diff --git a/src/plugins/random_panphasia.cc b/src/plugins/random_panphasia.cc
+index 8b3423d..71a7333 100644
+--- a/src/plugins/random_panphasia.cc
++++ b/src/plugins/random_panphasia.cc
+@@ -284,8 +284,9 @@ void RNG_panphasia::fill_grid(int level, DensityGrid<real_t> &R)
+         ileft_corner[k] = (ileft[k] - nx[k] / 4 + (1 << level)) % (1 << level); // Isolated
+         ileft_corner[k] = (ileft[k] - nx[k] / 4 + (1 << level)) % (1 << level); // Isolated
+       }else{
+-        ileft_corner[k] = (ileft[k] - margins_[k] + (1 << level)) % (1 << level); // Isolated
+-        ileft_corner[k] = (ileft[k] - margins_[k] + (1 << level)) % (1 << level); // Isolated
++        int eff_margin = prefh_->get_margin_for_dim(level, k);
++        ileft_corner[k] = (ileft[k] - eff_margin + (1 << level)) % (1 << level); // Isolated
++        ileft_corner[k] = (ileft[k] - eff_margin + (1 << level)) % (1 << level); // Isolated
+       }
+     }
+     iexpand_left[k] = (ileft_corner[k] % grid_m_ == 0) ? 0 : ileft_corner[k] % grid_m_;

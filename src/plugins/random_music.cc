@@ -227,9 +227,9 @@ void RNG_music::compute_random_numbers(void)
 
     std::array<int,3> margin;
     if( prefh_->get_margin()>0 ){
-      margin[0] = prefh_->get_margin();
-      margin[1] = prefh_->get_margin();
-      margin[2] = prefh_->get_margin();
+      margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
+      margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
+      margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
     }else{
       margin[0] = prefh_->size(ilevel, 0)/2;
       margin[1] = prefh_->size(ilevel, 1)/2;
@@ -404,9 +404,9 @@ void RNG_music::store_rnd(int ilevel, rng *prng)
 
       std::array<int,3> margin;
       if( prefh_->get_margin()>0 ){
-        margin[0] = prefh_->get_margin();
-        margin[1] = prefh_->get_margin();
-        margin[2] = prefh_->get_margin();
+        margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
+        margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
+        margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
       }else{
         margin[0] = prefh_->size(ilevel, 0)/2;
         margin[1] = prefh_->size(ilevel, 1)/2;
@@ -461,9 +461,9 @@ void RNG_music::store_rnd(int ilevel, rng *prng)
     {
       std::array<int,3> margin;
       if( prefh_->get_margin()>0 ){
-        margin[0] = prefh_->get_margin();
-        margin[1] = prefh_->get_margin();
-        margin[2] = prefh_->get_margin();
+        margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
+        margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
+        margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
       }else{
         margin[0] = prefh_->size(ilevel, 0)/2;
         margin[1] = prefh_->size(ilevel, 1)/2;
@@ -525,9 +525,9 @@ void RNG_music::fill_grid(int ilevel, DensityGrid<real_t> &A)
     {
       std::array<int,3> margin;
       if( prefh_->get_margin()>0 ){
-        margin[0] = prefh_->get_margin();
-        margin[1] = prefh_->get_margin();
-        margin[2] = prefh_->get_margin();
+        margin[0] = prefh_->get_margin_for_dim(ilevel, 0);
+        margin[1] = prefh_->get_margin_for_dim(ilevel, 1);
+        margin[2] = prefh_->get_margin_for_dim(ilevel, 2);
       }else{
         margin[0] = prefh_->size(ilevel, 0)/2;
         margin[1] = prefh_->size(ilevel, 1)/2;

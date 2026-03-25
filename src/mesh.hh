@@ -1898,6 +1898,14 @@ public:
 		return margin_;
 	}
 
+	//! get the effective margin for a given level and dimension:
+	//! returns 0 for full-extent dimensions (periodic), margin_ otherwise
+	int get_margin_for_dim(int ilevel, int idim) const
+	{
+		if (margin_ < 0) return margin_;
+		return (size(ilevel, idim) == (size_t)(1ul << ilevel)) ? 0 : margin_;
+	}
+
 	//! get the total shift of the coordinate system in box coordinates
 	const double *get_coord_shift(void) const
 	{
