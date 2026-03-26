@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""
+Crop fullsize delta field to match the single zoom-in region and compare.
+
+Differences are reported as symmetrically-normalised relative fractions:
+
+    (A - B) / (0.5*(|A| + |B|) + eps)
+
+where eps = --eps (default 1e-6) prevents division by zero when both fields
+are near zero.  In that limit the numerator is also near zero, so the result
+naturally stays small without needing any pixel masking.
+
+The three comparisons always use FS as "A":
+    (FS - S1) / (0.5*(|FS|+|S1|) + eps)
+    (FS - S2) / (0.5*(|FS|+|S2|) + eps)
+    (S1 - S2) / (0.5*(|S1|+|S2|) + eps)
+
+Usage:
+    # Compare fullsize with two single fields
+    python crop_fullsize_to_single.py --fullsize fullsize/delta_level8_real.dat \
+        --single1 single/delta_level8_real.dat \
+        --single2 merge/cube0/delta_level8_real.dat \
+        --plot
+
+    # Specify custom refinement region (default: [0.375:0.625, 0.375:0.625, 0:1])
+    python crop_fullsize_to_single.py --fullsize ... --single1 ... --single2 ... \
+        --ref-left 0.375,0.375,0 --ref-right 0.625,0.625,1
+"""
+
+import numpy as np
+import struct
+import argparse
+
+
+def read_field(filename):
+    """Read a MUSIC2 debug binary field.
+
+    Header: nx(uint64) ny(uint64) nz(uint64) ox(int32) oy(int32) oz(int32)
+    Data:   float64[nx*ny*nz] in C order (i,j,k) with k fastest
+    """
+    with open(filename, 'rb') as f:
+        nx = struct.unpack('Q', f.read(8))[0]
+        ny = struct.unpack('Q', f.read(8))[0]
+        nz = struct.unpack('Q', f.read(8))[0]
+        ox = struct.unpack('i', f.read(4))[0]
+        oy = struct.unpack('i', f.read(4))[0]
+        oz = struct.unpack('i', f.read(4))[0]
+
+        data = np.fromfile(f, dtype=np.float64, count=nx * ny * nz)
+        data = data.reshape((int(nx), int(ny), int(nz)), order='C')
+
+    return data, (int(nx), int(ny), int(nz)), (ox, oy, oz)
+
+
+def write_field(filename, data, offset):
+    """Write a MUSIC2 debug binary field."""
+    nx, ny, nz = data.shape
+    ox, oy, oz = offset
+
+    with open(filename, 'wb') as f:
+        f.write(struct.pack('Q', nx))
+        f.write(struct.pack('Q', ny))
+        f.write(struct.pack('Q', nz))
+        f.write(struct.pack('i', ox))
+        f.write(struct.pack('i', oy))
+        f.write(struct.pack('i', oz))
+        data.astype(np.float64).tofile(f)
+
+
+def print_field_info(name, data, size, offset):
+    """Print field information."""
+    print(f"  {name}:")
+    print(f"    Size: {size[0]} x {size[1]} x {size[2]}")
+    print(f"    Offset: {offset}")
+    print(f"    Range: [{data.min():.6e}, {data.max():.6e}]")
+    print(f"    Mean: {data.mean():.6e}, Std: {data.std():.6e}")
+
+
+def compute_sym_rel_diff(data1, data2, name1, name2, eps=1e-6):
+    """Compute symmetric relative difference and print statistics.
+
+    rel_diff = (data1 - data2) / (0.5*(|data1| + |data2|) + eps)
+
+    When both fields are near zero the denominator is eps so the result stays
+    bounded; no pixel masking is needed.
+
+    Parameters
+    ----------
+    data1, data2 : ndarray  Fields to compare.
+    name1, name2 : str      Labels.
+    eps : float             Floor added to denominator (default 1e-6).
+                            Rule of thumb: ~1e-3 * typical |delta| amplitude.
+
+    Returns
+    -------
+    rel_diff : ndarray   Symmetric relative difference (no NaNs).
+    corr     : float     Pearson correlation between data1 and data2.
+    """
+    denom    = 0.5 * (np.abs(data1) + np.abs(data2)) + eps
+    rel_diff = (data1 - data2) / denom
+
+    corr = np.corrcoef(data1.flatten(), data2.flatten())[0, 1]
+
+    print(f"\n  ({name1} - {name2}) / (0.5*(|{name1}|+|{name2}|) + eps):")
+    print(f"    eps:             {eps:.2e}")
+    print(f"    Max |rel diff|:  {np.abs(rel_diff).max():.6e}")
+    print(f"    RMS rel diff:    {np.sqrt((rel_diff**2).mean()):.6e}")
+    print(f"    Mean rel diff:   {rel_diff.mean():.6e}")
+    print(f"    Correlation({name1},{name2}): {corr:.10f}")
+
+    return rel_diff, corr
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Crop fullsize and compare with two single zoom-in fields "
+                    "(symmetric relative differences)")
+    parser.add_argument("--fullsize", required=True,
+                        help="Path to fullsize delta field")
+    parser.add_argument("--single1", required=True,
+                        help="Path to first single delta field")
+    parser.add_argument("--single2", required=True,
+                        help="Path to second single delta field")
+    parser.add_argument("--ref-left", default="0.375,0.375,0",
+                        help="Refinement region left corner (default: 0.375,0.375,0)")
+    parser.add_argument("--ref-right", default="0.625,0.625,1",
+                        help="Refinement region right corner (default: 0.625,0.625,1)")
+    parser.add_argument("--output", "-o", default="fullsize_cropped.dat",
+                        help="Output cropped field filename")
+    parser.add_argument("--eps", type=float, default=1e-6,
+                        help="Floor added to symmetric denominator to prevent "
+                             "division by zero (default: 1e-6). "
+                             "Rule of thumb: set to ~1e-3 * typical |delta| amplitude.")
+    parser.add_argument("--plot", action="store_true",
+                        help="Plot comparison slices")
+    parser.add_argument("--plot-output", default="crop_comparison.png",
+                        help="Output plot filename")
+    parser.add_argument("--slice-z", type=int, default=None,
+                        help="Z index for x-y slice (default: middle)")
+    parser.add_argument("--slice-y", type=int, default=None,
+                        help="Y index for x-z slice (default: middle)")
+    parser.add_argument("--plane", choices=["xy", "xz", "both"], default="xy",
+                        help="Which plane to plot: xy, xz, or both (default: xy)")
+    args = parser.parse_args()
+
+    # Parse refinement region
+    ref_left  = [float(x) for x in args.ref_left.split(',')]
+    ref_right = [float(x) for x in args.ref_right.split(',')]
+
+    # Read fields
+    print("Reading fields...")
+    fullsize_data, fullsize_size, fullsize_offset = read_field(args.fullsize)
+    print_field_info("Fullsize", fullsize_data, fullsize_size, fullsize_offset)
+
+    single1_data, single1_size, single1_offset = read_field(args.single1)
+    print_field_info("Single1", single1_data, single1_size, single1_offset)
+
+    single2_data, single2_size, single2_offset = read_field(args.single2)
+    print_field_info("Single2", single2_data, single2_size, single2_offset)
+
+    # Calculate crop region
+    x_start = int(ref_left[0]  * fullsize_size[0])
+    y_start = int(ref_left[1]  * fullsize_size[1])
+    z_start = int(ref_left[2]  * fullsize_size[2])
+    x_end   = int(ref_right[0] * fullsize_size[0])
+    y_end   = int(ref_right[1] * fullsize_size[1])
+    z_end   = int(ref_right[2] * fullsize_size[2])
+
+    print(f"\nCrop region: [{x_start}:{x_end}, {y_start}:{y_end}, {z_start}:{z_end}]")
+    print(f"  Physical: [{ref_left[0]}:{ref_right[0]}, "
+          f"{ref_left[1]}:{ref_right[1]}, {ref_left[2]}:{ref_right[2]}]")
+
+    # Crop fullsize
+    cropped_data = fullsize_data[x_start:x_end, y_start:y_end, z_start:z_end].copy()
+    print(f"  Cropped size: {cropped_data.shape[0]} x {cropped_data.shape[1]} x "
+          f"{cropped_data.shape[2]}")
+
+    # Shape compatibility warnings
+    if cropped_data.shape != single1_data.shape:
+        print(f"\nWARNING: Shape mismatch with single1!")
+        print(f"  Cropped: {cropped_data.shape}, Single1: {single1_data.shape}")
+    if cropped_data.shape != single2_data.shape:
+        print(f"\nWARNING: Shape mismatch with single2!")
+        print(f"  Cropped: {cropped_data.shape}, Single2: {single2_data.shape}")
+    if single1_data.shape != single2_data.shape:
+        print(f"\nWARNING: Shape mismatch between single1 and single2!")
+        print(f"  Single1: {single1_data.shape}, Single2: {single2_data.shape}")
+
+    # Save cropped field
+    write_field(args.output, cropped_data, (x_start, y_start, z_start))
+    print(f"\nWrote cropped field to {args.output}")
+
+    # Compute symmetric relative differences
+    print("\n" + "="*60)
+    print("COMPARISON STATISTICS  [(A-B)/(0.5*(|A|+|B|)+eps)]")
+    print("="*60)
+
+    rel_fs_s1, corr_fs_s1 = compute_sym_rel_diff(
+        cropped_data, single1_data, "FS", "S1", args.eps)
+    rel_fs_s2, corr_fs_s2 = compute_sym_rel_diff(
+        cropped_data, single2_data, "FS", "S2", args.eps)
+    rel_s1_s2, corr_s1_s2 = compute_sym_rel_diff(
+        single1_data, single2_data, "S1", "S2", args.eps)
+
+    # Plot
+    if args.plot:
+        import matplotlib.pyplot as plt
+
+        nx, ny, nz = cropped_data.shape
+        z_idx = args.slice_z if args.slice_z is not None else nz // 2
+        y_idx = args.slice_y if args.slice_y is not None else ny // 2
+
+        # Color scale for raw data (symmetric)
+        vmax_data = max(
+            abs(cropped_data.min()), abs(cropped_data.max()),
+            abs(single1_data.min()), abs(single1_data.max()),
+            abs(single2_data.min()), abs(single2_data.max()),
+        )
+
+        # Color scale: 99th percentile avoids the theoretical ±2 extremes
+        # saturating the colorbar at pixels where A and B have opposite signs
+        all_rel = np.abs(np.concatenate([
+            rel_fs_s1.ravel(), rel_fs_s2.ravel(), rel_s1_s2.ravel()
+        ]))
+        vmax_rel = np.percentile(all_rel, 99)
+        if vmax_rel == 0:
+            vmax_rel = 1e-10
+
+        cmap_data = plt.cm.RdBu_r
+        cmap_rel  = plt.cm.RdBu_r
+        rel_label = f"(A-B)/(0.5*(|A|+|B|)+{args.eps:.0e})"
+
+        rel_items = [
+            (rel_fs_s1, corr_fs_s1, "(FS-S1)/mean|·|"),
+            (rel_fs_s2, corr_fs_s2, "(FS-S2)/mean|·|"),
+            (rel_s1_s2, corr_s1_s2, "(S1-S2)/mean|·|"),
+        ]
+
+        def _rms(arr):
+            return np.sqrt((arr**2).mean())
+
+        if args.plane == "both":
+            fig, axes = plt.subplots(4, 3, figsize=(15, 20))
+
+            # Row 0: x-y data slices
+            for col, (data, name) in enumerate([
+                (cropped_data, "Fullsize"),
+                (single1_data, "Single1"),
+                (single2_data, "Single2"),
+            ]):
+                ax = axes[0, col]
+                im = ax.imshow(data[:, :, z_idx].T, origin='lower', cmap=cmap_data,
+                               vmin=-vmax_data, vmax=vmax_data, aspect='equal')
+                cb = plt.colorbar(im, ax=ax)
+                cb.set_label("δ")
+                ax.set_title(f'{name} (z={z_idx})')
+                ax.set_xlabel('x'); ax.set_ylabel('y')
+
+            # Row 1: x-y sym-rel-diff slices
+            for col, (rel, corr, name) in enumerate(rel_items):
+                ax = axes[1, col]
+                im = ax.imshow(rel[:, :, z_idx].T, origin='lower', cmap=cmap_rel,
+                               vmin=-vmax_rel, vmax=vmax_rel, aspect='equal')
+                cb = plt.colorbar(im, ax=ax)
+                cb.set_label(rel_label)
+                ax.set_title(f'{name}\n(corr={corr:.6f})')
+                ax.set_xlabel('x'); ax.set_ylabel('y')
+
+            # Row 2: x-z data slices
+            for col, (data, name) in enumerate([
+                (cropped_data, "Fullsize"),
+                (single1_data, "Single1"),
+                (single2_data, "Single2"),
+            ]):
+                ax = axes[2, col]
+                im = ax.imshow(data[:, y_idx, :].T, origin='lower', cmap=cmap_data,
+                               vmin=-vmax_data, vmax=vmax_data, aspect='equal')
+                cb = plt.colorbar(im, ax=ax)
+                cb.set_label("δ")
+                ax.set_title(f'{name} (y={y_idx})')
+                ax.set_xlabel('x'); ax.set_ylabel('z')
+
+            # Row 3: x-z sym-rel-diff slices
+            for col, (rel, corr, name) in enumerate(rel_items):
+                ax = axes[3, col]
+                im = ax.imshow(rel[:, y_idx, :].T, origin='lower', cmap=cmap_rel,
+                               vmin=-vmax_rel, vmax=vmax_rel, aspect='equal')
+                cb = plt.colorbar(im, ax=ax)
+                cb.set_label(rel_label)
+                ax.set_title(f'{name}\n(corr={corr:.6f})')
+                ax.set_xlabel('x'); ax.set_ylabel('z')
+
+            fig.suptitle(
+                f'Symmetric rel. diff (A-B)/(0.5*(|A|+|B|)+eps={args.eps:.0e})\n'
+                f'xy at z={z_idx}, xz at y={y_idx}  |  '
+                f'RMS: FS-S1={_rms(rel_fs_s1):.2e}, '
+                f'FS-S2={_rms(rel_fs_s2):.2e}, '
+                f'S1-S2={_rms(rel_s1_s2):.2e}',
+                fontsize=11)
+
+        else:
+            fig, axes = plt.subplots(2, 3, figsize=(15, 12))
+
+            if args.plane == "xy":
+                slice_label = f"z={z_idx}"
+                xlabel, ylabel = 'x', 'y'
+                get_slice = lambda d: d[:, :, z_idx].T
+            else:  # xz
+                slice_label = f"y={y_idx}"
+                xlabel, ylabel = 'x', 'z'
+                get_slice = lambda d: d[:, y_idx, :].T
+
+            # Top row: raw data
+            for col, (data, name) in enumerate([
+                (cropped_data, "Fullsize"),
+                (single1_data, "Single1"),
+                (single2_data, "Single2"),
+            ]):
+                ax = axes[0, col]
+                im = ax.imshow(get_slice(data), origin='lower', cmap=cmap_data,
+                               vmin=-vmax_data, vmax=vmax_data, aspect='equal')
+                cb = plt.colorbar(im, ax=ax)
+                cb.set_label("δ")
+                ax.set_title(f'{name} ({slice_label})')
+                ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+
+            # Bottom row: sym-rel-diff
+            for col, (rel, corr, name) in enumerate(rel_items):
+                ax = axes[1, col]
+                im = ax.imshow(get_slice(rel), origin='lower', cmap=cmap_rel,
+                               vmin=-vmax_rel, vmax=vmax_rel, aspect='equal')
+                cb = plt.colorbar(im, ax=ax)
+                cb.set_label(rel_label)
+                ax.set_title(f'{name}\n(corr={corr:.6f})')
+                ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+
+            fig.suptitle(
+                f'Symmetric rel. diff (A-B)/(0.5*(|A|+|B|)+eps={args.eps:.0e})  '
+                f'|  {slice_label}\n'
+                f'RMS: FS-S1={_rms(rel_fs_s1):.2e}, '
+                f'FS-S2={_rms(rel_fs_s2):.2e}, '
+                f'S1-S2={_rms(rel_s1_s2):.2e}',
+                fontsize=11)
+
+        fig.tight_layout()
+        fig.savefig(args.plot_output, dpi=150, bbox_inches='tight')
+        print(f"\nSaved plot to {args.plot_output}")
+        plt.close(fig)
+
+    return 0
+
+
+if __name__ == "__main__":
+    exit(main())
